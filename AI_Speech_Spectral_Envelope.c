@@ -1,0 +1,158 @@
+/*
+ * AI_Speech_Spectral_Envelope_Static.c
+ * Author : Imjonh
+ * Date : [Current Date]
+ * Description : Find the Spectral Envelope of Voice Signals based on the Cepstrum using static memory allocation.
+ * Homework #3 for "AI and Speech Signal Processing"
+ */
+
+#include <stdio.h>
+#include <math.h>
+
+#define SAMPLE_SIZE 320
+#define PI 3.14159265358979323846
+#define LIFTER_POINTS 50
+#define EPSILON 1e-12 // To avoid log(0)
+
+// DFT 함수
+// arguments: DFT 할 신호, 실수부 출력 배열, 허수부 출력 배열, 샘플 크기 N
+void Dft(float* signal, float* real_out, float* imag_out, int N) {
+    for (int k = 0; k < N; k++) {
+        real_out[k] = 0;
+        imag_out[k] = 0;
+        for (int n = 0; n < N; n++) {
+            double angle = 2 * PI * k * n / N;
+            real_out[k] += signal[n] * cos(angle);
+            imag_out[k] -= signal[n] * sin(angle);
+        }
+    }
+}
+
+// IDFT 함수
+void Idft(float* real_in, float* imag_in, float* signal_out, int N) {
+    for (int n = 0; n < N; n++) {
+        signal_out[n] = 0;
+        for (int k = 0; k < N; k++) {
+            double angle = 2 * PI * k * n / N;
+            signal_out[n] += real_in[k] * cos(angle) - imag_in[k] * sin(angle);
+        }
+        signal_out[n] /= N;
+    }
+}
+
+int main() {
+
+    FILE* male_voice_data = NULL;
+    FILE* output_spectrum_file = NULL;
+    FILE* output_envelope_file = NULL;
+
+    // ==== [ 정적 배열 선언 및 초기화 ] ====
+        // 입력 받을 음성 신호 저장용 변수
+    float speech_signal[SAMPLE_SIZE] = { 0.0f, };
+    short data_short = 0;
+
+        // 스펙트럼 관련 변수들
+    float spectrum_real[SAMPLE_SIZE] = { 0.0f, };
+    float spectrum_imag[SAMPLE_SIZE] = { 0.0f, };
+    float spectrum_mag[SAMPLE_SIZE] = { 0.0f, };
+    float log_spectrum_mag[SAMPLE_SIZE] = { 0.0f, };
+
+        // cepstrum 관련 변수들
+    float cepstrum_imag_input[SAMPLE_SIZE] = { 0.0f, };
+    float cepstrum[SAMPLE_SIZE] = { 0.0f, };
+    float liftered_cepstrum[SAMPLE_SIZE] = { 0.0f, };
+
+        // envelope 관련 변수들
+    float envelope_real[SAMPLE_SIZE] = { 0.0f, };
+    float envelope_imag[SAMPLE_SIZE] = { 0.0f, };
+    float log_spectral_envelope[SAMPLE_SIZE] = { 0.0f, };
+
+
+    // 파일 열기
+    if (fopen_s(&male_voice_data, "Male.raw", "rb") != 0 || male_voice_data == NULL) {
+        printf("Error opening Male.raw\n");
+        return 1;
+    }
+
+    // 출력 파일 이름 설정
+    char envelope_filename[100];
+
+    sprintf(envelope_filename, "spectral_envelope_liftering point%d_log_scale.txt", LIFTER_POINTS);
+
+    if (fopen_s(&output_spectrum_file, "spectrum_log_scale.txt", "w") != 0 || output_spectrum_file == NULL) {
+        printf("Error opening spectrum_log_scale.txt\n");
+        if (male_voice_data) fclose(male_voice_data);
+        return 1;
+    }
+    if (fopen_s(&output_envelope_file, envelope_filename, "w") != 0 || output_envelope_file == NULL) {
+        printf("Error opening %s\n", envelope_filename);
+        if (male_voice_data) fclose(male_voice_data);
+        if (output_spectrum_file) fclose(output_spectrum_file);
+        return 1;
+    }
+
+    // 1. 음성 신호 읽기 (첫 320 샘플)
+    for (int n = 0; n < SAMPLE_SIZE; n++) {
+        if (fread(&data_short, sizeof(short), 1, male_voice_data) != 1) {
+            printf("Error reading from Male.raw or EOF reached prematurely at sample %d\n", n);
+            fclose(male_voice_data);
+            fclose(output_spectrum_file);
+            fclose(output_envelope_file);
+            return 1;
+        }
+        speech_signal[n] = (float)data_short;
+    }
+    fclose(male_voice_data);
+
+    // 2. Hamming Window 적용
+    for (int n = 0; n < SAMPLE_SIZE; n++) {
+        speech_signal[n] *= (0.54f - 0.46f * cos(2.0f * PI * n / (SAMPLE_SIZE - 1.0f)));
+    }
+
+    // 3. 입력 신호 Male_vocie에 대해 DFT를 수행하여 스펙트럼 S(k) 계산
+    Dft(speech_signal, spectrum_real, spectrum_imag, SAMPLE_SIZE);
+
+    // 4. Cepstrum 분석을 위해 전체 Sample Size에 대해 Spectrum magnitude 계산
+    for (int k = 0; k < SAMPLE_SIZE; k++) {
+        spectrum_mag[k] = sqrt( (spectrum_real[k] * spectrum_real[k]) + (spectrum_imag[k] * spectrum_imag[k]) );
+        log_spectrum_mag[k] = log(spectrum_mag[k] + EPSILON);
+    }
+
+    // 4-1. Spectrum Magnitude 파일 출력 (0 ~ N/2-1)
+    for (int k = 0; k < SAMPLE_SIZE / 2; k++) {
+        fprintf(output_spectrum_file, "%f\n", log_spectrum_mag[k]);
+    }
+    fclose(output_spectrum_file);
+
+    // 5. 덧셈 연산을 위해 log를 도입한 spectrum magnitude를 IDFT하여 Low-time Liftering 준비
+    Idft(log_spectrum_mag, cepstrum_imag_input, cepstrum, SAMPLE_SIZE);
+
+    // 6. Low-time liftering, 대칭성 유지
+    liftered_cepstrum[0] = cepstrum[0];
+    for (int n = 1; n < LIFTER_POINTS; n++) {
+        liftered_cepstrum[n] = cepstrum[n];
+        liftered_cepstrum[SAMPLE_SIZE - n] = cepstrum[SAMPLE_SIZE - n];
+    }
+
+    // 7. log|H(k)|를 얻기 위해 liftered_cepstrum에 대해 DFT 수행
+    Dft(liftered_cepstrum, envelope_real, envelope_imag, SAMPLE_SIZE);
+
+    // 8. 게인 맞추기 (DC 성분 일치) 및 파일 출력
+    float dc_offset_adjustment = 0;
+    if (SAMPLE_SIZE > 0 ) {
+        dc_offset_adjustment = log_spectrum_mag[0] - envelope_real[0];
+    }
+
+    // 8-1. log_spectral_envelope 게인 맞추고 파일 출력
+    for (int k = 0; k < SAMPLE_SIZE / 2; k++) {
+        log_spectral_envelope[k] = envelope_real[k] + dc_offset_adjustment;
+        fprintf(output_envelope_file, "%f\n", log_spectral_envelope[k]);
+    }
+    fclose(output_envelope_file);
+
+    printf("Processing complete. Output files generated:\n");
+    printf(" - log_spectrum.txt (Original log-magnitude spectrum)\n");
+    printf(" - log_spectral_envelope.txt (Log-magnitude spectral envelope)\n");
+
+    return 0;
+}
