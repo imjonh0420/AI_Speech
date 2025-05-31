@@ -6,7 +6,7 @@
 #define EPSILON 1e-12 // To avoid log(0)
 
 // DFT 함수
-// arguments: DFT 할 신호, 실수부 출력 배열 주소, 허수부 출력 배열 주소소, 샘플 크기 N
+// arguments: DFT 할 신호, 실수부 출력 배열 주소, 허수부 출력 배열 주소, 샘플 크기 N
 void Dft(float* signal, float* real_out, float* imag_out, int N) {
     for (int k = 0; k < N; k++) {
         real_out[k] = 0;
@@ -83,7 +83,11 @@ int main() {
 
     // [1-1]. Hamming Window 적용
     for (int n = 0; n < SAMPLE_SIZE; n++) {
-        speech_signal[n] *= (0.54f - 0.46f * cos(2.0f * PI * n / (SAMPLE_SIZE - 1.0f)));
+        double angle = 2.0 * PI * n / (SAMPLE_SIZE - 1.0f);
+        speech_signal[n] *= (0.54f - 0.46f * cos(2.0f * PI * n / (SAMPLE_SIZE - 1.0f)));  // Hamming Window
+        //speech_signal[n] *= 0.5f - 0.5f * cos(angle); // Hanning Window
+        //speech_signal[n] *= (0.42f - 0.5f * cos(angle) + 0.08f * cos(2.0f * angle)); // Blackman Window
+        //speech_signal[n] *= sin((PI/(SAMPLE_SIZE - 1.0))*(n+0.5)); // Sine Window
     }
 
     // [2]. 입력 신호 Male_voice에 대해 DFT를 수행하여 스펙트럼 S(k) 계산
